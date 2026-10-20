@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { isSupabaseConfigured } from './lib/supabase';
+import { FormEvent, useEffect, useState } from 'react';
+import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 const courses = [
   { number: '01', title: 'Reiki', category: 'FORMAÇÃO DE BASE', description: 'Um percurso estruturado para conhecer os fundamentos, desenvolver a prática e integrar a aprendizagem no quotidiano.', status: 'Primeira formação' },
@@ -9,8 +9,82 @@ const courses = [
 
 const navItems = ['Início', 'Escola Online', 'Experiências', 'Eventos', 'O Instituto'];
 
+type AuthMode = 'signin' | 'signup';
+type AppUser = { id: string; email?: string };
+
 export default function App() {
   const [activeNav, setActiveNav] = useState('Início');
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>('signin');
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ? { id: data.session.user.id, email: data.session.user.email } : null);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ? { id: session.user.id, email: session.user.email } : null);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  function openAccount() {
+    setAuthError('');
+    setAuthMessage('');
+    setAuthOpen(true);
+  }
+
+  async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthError('');
+    setAuthMessage('');
+    if (!supabase || !isSupabaseConfigured) {
+      setAuthError('A ligação ao Supabase ainda não está configurada neste ambiente.');
+      return;
+    }
+    setAuthBusy(true);
+    try {
+      if (authMode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: { data: { full_name: fullName.trim() } },
+        });
+        if (error) throw error;
+        if (data.session) {
+          setAuthMessage('Conta criada. A sessão foi iniciada.');
+        } else {
+          setAuthMessage('Pedido de registo recebido. Verifica o teu email para confirmar a conta antes de iniciar sessão.');
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        if (error) throw error;
+        setAuthMessage('Sessão iniciada.');
+      }
+      setPassword('');
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Não foi possível concluir a operação. Tenta novamente.');
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleSignOut() {
+    if (!supabase) return;
+    const { error } = await supabase.auth.signOut();
+    if (error) setAuthError(error.message);
+    else {
+      setAuthMessage('Sessão terminada.');
+      setAuthError('');
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -21,12 +95,22 @@ export default function App() {
         </a>
         <nav className="main-nav" aria-label="Navegação principal">
           {navItems.map((item) => (
-            <button className={activeNav === item ? 'nav-link active' : 'nav-link'} key={item} onClick={() => setActiveNav(item)}>
+            <button
+              className={activeNav === item ? 'nav-link active' : 'nav-link'}
+              key={item}
+              onClick={() => {
+                setActiveNav(item);
+                const target: Record<string, string> = { 'Início': 'inicio', 'Escola Online': 'escola', 'Experiências': 'experiencias', 'Eventos': 'experiencias', 'O Instituto': 'instituto' };
+                document.getElementById(target[item])?.scrollIntoView({ behavior: 'smooth' });
+              }}
+            >
               {item}
             </button>
           ))}
         </nav>
-        <button className="account-button" onClick={() => window.alert('A área de aluno será ativada na fase de autenticação.')}>Área de aluno <span aria-hidden="true">↗</span></button>
+        <button className="account-button" onClick={openAccount}>
+          {user ? 'A minha conta' : 'Área de aluno'} <span aria-hidden="true">↗</span>
+        </button>
       </header>
 
       <main id="inicio">
@@ -90,6 +174,53 @@ export default function App() {
         <span>Instituto VibraSer © {new Date().getFullYear()}</span>
         <span className={isSupabaseConfigured ? 'connection-status connected' : 'connection-status'}><span />{isSupabaseConfigured ? 'Serviços configurados' : 'Configuração técnica em preparação'}</span>
       </footer>
+
+      {authOpen && (
+        <div className="auth-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAuthOpen(false); }}>
+          <section className="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+            <button className="auth-close" onClick={() => setAuthOpen(false)} aria-label="Fechar">×</button>
+            <p className="eyebrow">INSTITUTO VIBRASER</p>
+            <h2 id="auth-title">{user ? 'A tua conta' : authMode === 'signin' ? 'Bem-vindo de volta.' : 'Começa o teu caminho.'}</h2>
+            {user ? (
+              <div className="account-summary">
+                <p>Sessão iniciada com</p>
+                <strong>{user.email || 'Conta autenticada'}</strong>
+                <p className="auth-note">A área de aluno será ligada às formações e ao progresso numa fase seguinte.</p>
+                <button className="button-primary auth-submit" onClick={handleSignOut}>Terminar sessão</button>
+              </div>
+            ) : (
+              <form onSubmit={handleAuthSubmit}>
+                {!isSupabaseConfigured && <p className="auth-note">A autenticação ainda não está ligada a este ambiente. Primeiro é necessário configurar as variáveis de ambiente e aplicar a migração da base de dados.</p>}
+                {authMode === 'signup' && (
+                  <label>Nome completo
+                    <input autoComplete="name" value={fullName} onChange={(event) => setFullName(event.target.value)} required maxLength={120} />
+                  </label>
+                )}
+                <label>Email
+                  <input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+                </label>
+                <label>Palavra-passe
+                  <input type="password" autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} required />
+                  {authMode === 'signup' && <small>Utiliza pelo menos 8 caracteres.</small>}
+                </label>
+                {authError && <p className="auth-feedback error" role="alert">{authError}</p>}
+                {authMessage && <p className="auth-feedback success" role="status">{authMessage}</p>}
+                <button className="button-primary auth-submit" type="submit" disabled={authBusy || !isSupabaseConfigured}>
+                  {authBusy ? 'A processar…' : authMode === 'signin' ? 'Iniciar sessão' : 'Criar conta'}
+                </button>
+                <p className="auth-switch">
+                  {authMode === 'signin' ? 'Ainda não tens conta?' : 'Já tens conta?'}{' '}
+                  <button type="button" onClick={() => { setAuthMode(authMode === 'signin' ? 'signup' : 'signin'); setAuthError(''); setAuthMessage(''); }}>
+                    {authMode === 'signin' ? 'Criar conta' : 'Iniciar sessão'}
+                  </button>
+                </p>
+              </form>
+            )}
+            {authError && user && <p className="auth-feedback error" role="alert">{authError}</p>}
+            {authMessage && user && <p className="auth-feedback success" role="status">{authMessage}</p>}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
