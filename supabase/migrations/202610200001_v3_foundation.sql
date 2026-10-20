@@ -126,6 +126,10 @@ create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_user();
 
+-- Trigger functions are invoked by their triggers, not directly by app clients.
+revoke all on function public.set_updated_at() from public, anon, authenticated;
+revoke all on function public.handle_new_user() from public, anon, authenticated;
+
 create or replace function public.is_admin()
 returns boolean
 language sql
@@ -140,6 +144,9 @@ as $$
       and p.is_active = true
   );
 $$;
+
+revoke all on function public.is_admin() from public;
+
 
 alter table public.profiles enable row level security;
 alter table public.courses enable row level security;
@@ -287,7 +294,8 @@ revoke all on public.profiles, public.courses, public.course_modules, public.les
 grant select on public.courses, public.course_modules, public.lessons to anon;
 grant select on public.profiles, public.courses, public.course_modules, public.lessons,
   public.enrollments, public.lesson_progress to authenticated;
-grant update (full_name) on public.profiles to authenticated;
+-- RLS prevents students from changing role or is_active; admins may manage profiles.
+grant update on public.profiles to authenticated;
 grant insert, update, delete on public.courses, public.course_modules, public.lessons to authenticated;
 grant insert, update, delete on public.enrollments to authenticated;
 grant insert, update on public.lesson_progress to authenticated;
