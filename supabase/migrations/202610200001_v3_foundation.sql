@@ -293,4 +293,4 @@ grant insert, update, delete on public.enrollments to authenticated;
 grant insert, update on public.lesson_progress to authenticated;
 
 grant usage on schema public to anon, authenticated;
-grant execute on function public.is_admin() to authenticated;
+grant execute on function public.is_admin() to anon, authenticated;
